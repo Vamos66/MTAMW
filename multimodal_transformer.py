@@ -1,12 +1,9 @@
 import torch
 from torch import nn
 import math
-import pickle
-def to_pickle(obj, path):
-    with open(path, 'wb') as f:
-        pickle.dump(obj, f)
 
-DEVICE=torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+
+DEVICE=torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class Multimodal_SelfAttention(nn.Module):
     def __init__(self , config):
@@ -36,10 +33,9 @@ class Multimodal_SelfAttention(nn.Module):
         self.LayerNorm = nn.LayerNorm(config['hidden_size'] , eps= config['layer_norm_eps'])
         self.dropout_2 = nn.Dropout(config['hidden_dropout_prob'])
 
-        #self.w_a = nn.Parameter(torch.tensor(0.62))
-        #self.w_b = nn.Parameter(torch.tensor(0.2))
-        #self.w_c = nn.Parameter(torch.tensor(0.2))
-        #self.Adap_W = nn.Linear(96,1)
+        self.w_a = nn.Parameter(torch.tensor(0.62))
+        self.w_b = nn.Parameter(torch.tensor(0.2))
+        self.w_c = nn.Parameter(torch.tensor(0.2))
 
     def transpose1(self, x ):
         new_shape = x.size()[:-1] + (self.num_head , self.attention_head_size)
@@ -58,46 +54,6 @@ class Multimodal_SelfAttention(nn.Module):
 
 
     def forward(self, hidden_state , attention_mask ):
-        """
-        hidden_T = self.transpose1(hidden_state) #[batch_size , num_head_size , sentence_len ,attention_head_size]
-        cls_t = hidden_T[:,:,0,:]
-        cls_t = torch.unsqueeze(cls_t, dim=2)
-
-        cls_v = hidden_T[:,:,self.w_len,:]
-        cls_v = torch.unsqueeze(cls_v,dim = 2)
-
-        cls_a = hidden_T[:,:,self.w_len+self.v_len,:]
-        cls_a = torch.unsqueeze(cls_a,dim = 2)
-
-        cls_all = torch.cat((cls_t,cls_v,cls_a),dim=2)
-
-        cls_all = self.Adap_W(cls_all)
-        cls_all = torch.squeeze(cls_all)
-        weight_all = nn.Softmax(-1)(cls_all)
-        wei_t = weight_all[:,:,0]
-
-        #wei_t = torch.unsqueeze(wei_t,dim=2)
-        wei_t = wei_t.view(*(wei_t.size()+(1,1)))+0.1
-        wei_t = wei_t.repeat(1,1,200,self.w_len)
-
-        wei_v = weight_all[:,:,1]
-        wei_v = wei_v.view(*(wei_v.size() + (1, 1)))+0.2
-        #wei_v = torch.unsqueeze(wei_v,dim=2)
-        wei_v = wei_v.repeat(1,1,200,self.v_len)
-        wei_a = weight_all[:,:,2]
-        wei_a = wei_a.view(*(wei_a.size() + (1, 1)))+0.2
-        #wei_a = torch.unsqueeze(wei_a,dim=2)
-        wei_a = wei_a.repeat(1,1,200,self.a_len)
-        all_wei = torch.cat((wei_t,wei_v,wei_a),dim=-1)
-
-        :param hidden_state:
-        :param attention_mask:
-        :return:
-        """
-
-
-
-
         num_head_q = self.q(hidden_state)
         num_head_k = self.k(hidden_state)
         num_head_v = self.v(hidden_state)
@@ -107,18 +63,19 @@ class Multimodal_SelfAttention(nn.Module):
         v_layer = self.transpose1(num_head_v)
 
         attention_score = torch.matmul(q_layer , k_layer.transpose(-1,-2))
-        #print(attention_score.shape)
         attention_score = attention_score / math.sqrt(self.attention_head_size)
 
         #attention_score = self.transpose2(attention_score)
 
         #if attention_mask is not None:
         # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
+
+        #my_mask = my_mask.T @ my_mask
+        #my_mask = (my_mask == False)
         attention_mask = attention_mask.unsqueeze(1)
         attention_mask = attention_mask.permute(0,2,1)@attention_mask
         my_mask = (attention_mask == False)
         my_mask = my_mask.unsqueeze(1)
-
 
         """
         typ = attention_mask.size()[:2] + (attention_mask.size()[-1] * self.modal_size \
@@ -130,30 +87,22 @@ class Multimodal_SelfAttention(nn.Module):
 
         # [batch_size , num_head_size , sentence_len ,sentence_len]
 
-        #删除多模态注意力
-        attention_prob = nn.Softmax(-1)(attention_score)
-        """
         attention_prob_w = nn.Softmax(-1)(attention_score[:,:,:,:self.w_len])
         attention_prob_v = nn.Softmax(-1)(attention_score[:,:,:,self.w_len:self.w_len+self.v_len])
         attention_prob_a = nn.Softmax(-1)(attention_score[:,:,:,self.w_len+self.v_len:self.w_len+self.v_len+self.a_len])
-
-        attention_prob = torch.cat((attention_prob_w,attention_prob_v,attention_prob_a),dim=-1)        
-        """
-
+        attention_prob = torch.cat((attention_prob_w,attention_prob_v,attention_prob_a),dim=-1)
 
         #attention_prob = self.transpose3(attention_prob)
 
-        m_a = torch.full((1,1,200,50),1).to(DEVICE)
-        m_b = torch.full((1,1,200,70),1).to(DEVICE)
-        m_c = torch.full((1,1,200,80),1).to(DEVICE)
-        #m_a = self.w_a * torch.ones(1,1,200,50).to(DEVICE)
-        #m_b = self.w_b * torch.ones(1,1,200,70).to(DEVICE)
-        #m_c = self.w_c * torch.ones(1,1,200,80).to(DEVICE)
+        #m_a = torch.full((1,1,150,50),0.62).to(DEVICE)
+        #m_b = torch.full((1,1,150,50),0.2).to(DEVICE)
+        #m_c = torch.full((1,1,150,50),0.2).to(DEVICE)
+        m_a = self.w_a * torch.ones(1,1,180,50).to(DEVICE)
+        m_b = self.w_b * torch.ones(1,1,180,60).to(DEVICE)
+        m_c = self.w_c * torch.ones(1,1,180,70).to(DEVICE)
         mask2 = torch.cat((m_a,m_b,m_c),dim=3).to(DEVICE)
 
         attention_prob = attention_prob.mul(mask2)
-        #attention_prob = attention_prob.mul(all_wei)
-
         attention_prob = self.dropout_1(attention_prob)
 
         context_layer = torch.matmul(attention_prob, v_layer)
@@ -165,9 +114,7 @@ class Multimodal_SelfAttention(nn.Module):
         context_layer = self.dense(context_layer)
         context_layer = self.dropout_2(context_layer)
         hidden_state = self.LayerNorm(context_layer + hidden_state)
-        #print("-----存储注意力分数-----")
-        #print(attention_prob)
-        #to_pickle(attention_prob, 'data/attention.pkl')
+
         outputs = (hidden_state, attention_prob) if self.output_attention else (hidden_state,)
         return outputs
 
@@ -248,24 +195,4 @@ class Mul_Encoder(nn.Module):
         if self.output_attention:
             outputs = outputs + (all_attention,)
         return outputs  # last-layer hidden state, (all hidden states), (all attentions)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
